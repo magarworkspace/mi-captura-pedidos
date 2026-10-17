@@ -1,11 +1,16 @@
 import streamlit as st
 import pandas as pd
 import io
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 
 # Configuración de la página para dispositivos móviles y tema oscuro
 st.set_page_config(page_title="Mi Captura de Pedidos", layout="centered")
 
-# Estilos personalizados (CSS inyectado) para lograr el look de tu captura
+# Estilos personalizados (CSS inyectado)
 st.markdown("""
     <style>
     .main { background-color: #0d1117; }
@@ -19,26 +24,27 @@ st.markdown("""
 
 st.title("📱 Mi Captura de Pedidos")
 
-# 1. Carga del Archivo (Optimizado para no saturar memoria)
-st.subheader("📂 1. Arrastra aquí el Excel o CSV del proveedor")
-archivo_cargado = st.file_uploader("", type=["xlsx", "csv"], label_visibility="collapsed")
-
 # Inicializar estados de la aplicación
 if "carrito" not in st.session_state:
     st.session_state.carrito = {}
 if "confirmar_borrar" not in st.session_state:
     st.session_state.confirmar_borrar = False
+if "codigo_a_procesar" not in st.session_state:
+    st.session_state.codigo_a_procesar = ""
 
-# Función inteligente para buscar la fila de encabezados sin importar el formato del proveedor
+# Configuración de tu cuenta de correo emisora (Gratuito usando Gmail)
+# NOTA: Para producción, puedes guardar estos datos de forma segura en los "Secrets" de Streamlit Cloud.
+EMAIL_EMISOR = "tu_correo@gmail.com" 
+PASSWORD_EMISOR = "tu_contraseña_de_aplicacion" # Contraseña de aplicación generada en tu cuenta de Google
+
+# Función inteligente para buscar la fila de encabezados
 @st.cache_data
 def cargar_datos(archivo):
-    # Leer el archivo completo sin saltar nada primero
     if archivo.name.endswith('.csv'):
         df_crudo = pd.read_csv(archivo, header=None)
     else:
         df_crudo = pd.read_excel(archivo, header=None)
     
-    # Buscar en qué fila se encuentran los encabezados reales
     fila_encabezado = 0
     for i, row in df_crudo.iterrows():
         valores_fila = [str(val).strip().upper() for val in row.values]
@@ -46,7 +52,6 @@ def cargar_datos(archivo):
             fila_encabezado = i
             break
     
-    # Volver a cargar el archivo comenzando exactamente en esa fila
     archivo.seek(0)
     if archivo.name.endswith('.csv'):
         df = pd.read_csv(archivo, skiprows=fila_encabezado)
@@ -56,53 +61,94 @@ def cargar_datos(archivo):
     df.columns = df.columns.str.strip()
     return df
 
+# Función para enviar el correo real con el archivo adjunto
+def enviar_correo_con_adjunto(correo_destino, archivo_bytes):
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = EMAIL_EMISOR
+        msg['To'] = correo_destino
+        msg['Subject'] = "Nuevo Pedido Semanal de Refacciones"
+        
+        cuerpo = "Hola, adjunto el archivo generado con el pedido de esta semana. Saludos."
+        msg.attach(MIMEText(cuerpo, 'plain'))
+        
+        adjunto = MIMEBase('application', 'octet-stream')
+        adjunto.set_payload(archivo_bytes)
+        encoders.encode_base64(adjunto)
+        adjunto.add_header('Content-Disposition', 'attachment; filename="Pedido_Semanal.xlsx"')
+        msg.attach(adjunto)
+        
+        # Conexión al servidor SMTP de Gmail
+        server = smtplib.SMTP('://gmail.com', 587)
+        server.starttls()
+        server.login(EMAIL_EMISOR, PASSWORD_EMISOR)
+        text = msg.as_string()
+        server.sendmail(EMAIL_EMISOR, correo_destino, text)
+        server.quit()
+        return True
+    except Exception as e:
+        st.error(f"Error al enviar el correo: {str(e)}")
+        return False
+
+# 1. Carga del Archivo
+st.subheader("📂 1. Arrastra aquí el Excel o CSV del proveedor")
+archivo_cargado = st.file_uploader("", type=["xlsx", "csv"], label_visibility="collapsed")
+
 if archivo_cargado:
     try:
         df_base = cargar_datos(archivo_cargado)
         
         # 2. Entrada de Presupuesto
-        st.subheader("💰 Ingresa el Presupuesto Semanal Neto:")
+        st.subheader("💰 Ingresa el Presupuesto Semanal:")
         presupuesto = st.number_input("", min_value=0.0, value=50000.0, step=1000.0, label_visibility="collapsed")
 
-        # 3. Módulo de Escaneo Simulado para Celular
+        # 3. Módulo de Escaneo Inteligente
         st.subheader("🔍 Escanear Código de Barras (Clave)")
-        codigo_escaneado = st.text_input("Haz clic aquí antes de usar tu escáner/cámara", key="scanner").strip()
+        
+        # Callback para procesar la entrada y limpiar la barra de inmediato
+        def procesar_escaneo():
+            st.session_state.codigo_a_procesar = st.session_state.scanner_input.strip()
+            st.session_state.scanner_input = "" # Limpia la barra de texto instantáneamente
 
-        if codigo_escaneado:
-            # Buscar el producto por CLAVE PRODUCTO
-            producto_match = df_base[df_base['CLAVE PRODUCTO'].str.strip() == codigo_escaneado]
+        st.text_input("Haz clic aquí antes de usar tu escáner/cámara", key="scanner_input", on_change=procesar_escaneo)
+
+        # Si hay un código capturado esperando ser procesado
+        if st.session_state.codigo_a_procesar:
+            codigo = st.session_state.codigo_a_procesar
+            producto_match = df_base[df_base['CLAVE PRODUCTO'].str.strip() == codigo]
             
             if not producto_match.empty:
-                idx = producto_match.index[0]
-                desc = producto_match.loc[idx, 'DESCRIPCION']
-                precio_uni = float(producto_match.loc[idx, 'PRECIO UNITARIO'])
+                idx = producto_match.index
+                desc = producto_match.loc[idx, 'DESCRIPCION'].values[0]
+                precio_uni = float(producto_match.loc[idx, 'PRECIO UNITARIO'].values[0])
                 
                 st.success(f"Detectado: {desc}")
                 
-                # Pedir cantidad inmediatamente abajo del escaneo
-                cant = st.number_input(f"Cantidad para {codigo_escaneado}:", min_value=1, value=1, step=1)
-                
-                if st.button("Agregar al Pedido"):
-                    st.session_state.carrito[codigo_escaneado] = {
-                        "descripcion": desc,
-                        "precio_unitario": precio_uni,
-                        "cantidad": cant
-                    }
-                    st.toast("¡Producto añadido!")
+                # Formulario para definir cantidad y agregar
+                with st.form(key="form_agregar"):
+                    cant = st.number_input(f"Cantidad para {codigo}:", min_value=1, value=1, step=1)
+                    boton_confirmar = st.form_submit_button("Confirmar y Agregar")
+                    
+                    if boton_confirmar:
+                        st.session_state.carrito[codigo] = {
+                            "descripcion": desc,
+                            "precio_unitario": precio_uni,
+                            "cantidad": cant
+                        }
+                        st.session_state.codigo_a_procesar = "" # Liberar el espacio
+                        st.toast("¡Producto añadido!")
+                        st.rerun()
             else:
-                st.error("Código no encontrado en la lista de precios.")
+                st.error(f"Código '{codigo}' no encontrado en la lista de precios.")
+                st.session_state.codigo_a_procesar = ""
 
         # 4. Cálculos y Resumen del Pedido
         st.subheader("📊 Resumen del Pedido")
         
         if st.session_state.carrito:
-            # Calcular Suma de Netos (Equivalente a tu celda K8)
             suma_netos = sum(item["precio_unitario"] * item["cantidad"] for item in st.session_state.carrito.values())
-            
-            # Aplicar tu Fórmula Matemática Comercial Exacta (Neto + IVA 16% - Descuento 22.13%)
             monto_final_real = (suma_netos * 1.16) * (1 - 0.2213)
             
-            # Renderizado del Semáforo Visual
             if monto_final_real <= presupuesto:
                 clase_semaforo = "verde"
                 mensaje_semaforo = f"🟢 DENTRO DEL PRESUPUESTO (Total Real: ${monto_final_real:,.2f} MXN)"
@@ -112,7 +158,6 @@ if archivo_cargado:
                 
             st.markdown(f'<div class="metric-box {clase_semaforo}"><h3>{mensaje_semaforo}</h3></div>', unsafe_allow_html=True)
             
-            # Mostrar Tabla de lo acumulado
             df_carrito = pd.DataFrame.from_dict(st.session_state.carrito, orient='index')
             st.dataframe(df_carrito[['descripcion', 'cantidad', 'precio_unitario']], use_container_width=True)
 
@@ -120,7 +165,6 @@ if archivo_cargado:
             col1, col2 = st.columns(2)
             
             with col1:
-                # Botón de Email Abierto
                 if st.button("✉️ Enviar Pedido por E-mail"):
                     st.session_state.abrir_email = True
                     
@@ -129,6 +173,7 @@ if archivo_cargado:
                     if st.button("Confirmar Envío"):
                         output = io.BytesIO()
                         df_final = df_base.copy()
+                        # Mapear las cantidades capturadas al archivo original
                         df_final['CANTIDAD'] = df_final['CLAVE PRODUCTO'].map(
                             lambda x: st.session_state.carrito[x.strip()]['cantidad'] if x.strip() in st.session_state.carrito else ""
                         )
@@ -136,11 +181,12 @@ if archivo_cargado:
                         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                             df_final.to_excel(writer, index=False, sheet_name='Pedido')
                         
-                        st.success(f"¡Pedido enviado exitosamente a {correo_destino}!")
+                        # Ejecutar envío real
+                        if enviar_correo_con_adjunto(correo_destino, output.getvalue()):
+                            st.success(f"¡Pedido enviado con éxito a {correo_destino}!")
                         st.session_state.abrir_email = False
 
             with col2:
-                # Botón Clear con Doble Confirmación Corta
                 if not st.session_state.confirmar_borrar:
                     if st.button("🧹 Clear"):
                         st.session_state.confirmar_borrar = True
