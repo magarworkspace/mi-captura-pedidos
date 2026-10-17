@@ -34,8 +34,9 @@ if "codigo_a_procesar" not in st.session_state:
 
 # Configuración de tu cuenta de correo emisora (Gratuito usando Gmail)
 # NOTA: Para producción, puedes guardar estos datos de forma segura en los "Secrets" de Streamlit Cloud.
-EMAIL_EMISOR = "tu_correo@gmail.com" 
-PASSWORD_EMISOR = "tu_contraseña_de_aplicacion" # Contraseña de aplicación generada en tu cuenta de Google
+EMAIL_EMISOR = "magarworkspace@gmail.com" 
+PASSWORD_EMISOR = "f6ZbKU.cPJurM5f"
+# Contraseña de aplicación generada en tu cuenta de Google
 
 # Función inteligente para buscar la fila de encabezados
 @st.cache_data
