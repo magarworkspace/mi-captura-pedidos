@@ -42,7 +42,34 @@ if archivo_cargado:
         return df
 
     try:
-        df_base = cargar_datos(archivo_cargado)
+            @st.cache_data
+    def cargar_datos(archivo):
+        # 1. Leer el archivo completo sin saltar nada primero
+        if archivo.name.endswith('.csv'):
+            df_crudo = pd.read_csv(archivo, header=None)
+        else:
+            df_crudo = pd.read_excel(archivo, header=None)
+        
+        # 2. Buscar en qué fila se encuentran los encabezados reales
+        fila_encabezado = 0
+        for i, row in df_crudo.iterrows():
+            # Convertir la fila a texto para buscar las columnas clave
+            valores_fila = [str(val).strip().upper() for val in row.values]
+            if 'CLAVE PRODUCTO' in valores_fila or 'ID PRODUCTO' in valores_fila:
+                fila_encabezado = i
+                break
+        
+        # 3. Volver a cargar el archivo comenzando exactamente en esa fila
+        archivo.seek(0) # Reiniciar el puntero del archivo
+        if archivo.name.endswith('.csv'):
+            df = pd.read_csv(archivo, skiprows=fila_encabezado)
+        else:
+            df = pd.read_excel(archivo, skiprows=fila_encabezado)
+            
+        # Limpiar espacios raros en los nombres de las columnas
+        df.columns = df.columns.str.strip()
+        return df
+
         
         # 2. Entrada de Presupuesto
         st.subheader("💰 Ingresa el Presupuesto Semanal Neto:")
