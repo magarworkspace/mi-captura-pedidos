@@ -29,47 +29,36 @@ if "carrito" not in st.session_state:
 if "confirmar_borrar" not in st.session_state:
     st.session_state.confirmar_borrar = False
 
+# Función inteligente para buscar la fila de encabezados sin importar el formato del proveedor
+@st.cache_data
+def cargar_datos(archivo):
+    # Leer el archivo completo sin saltar nada primero
+    if archivo.name.endswith('.csv'):
+        df_crudo = pd.read_csv(archivo, header=None)
+    else:
+        df_crudo = pd.read_excel(archivo, header=None)
+    
+    # Buscar en qué fila se encuentran los encabezados reales
+    fila_encabezado = 0
+    for i, row in df_crudo.iterrows():
+        valores_fila = [str(val).strip().upper() for val in row.values]
+        if 'CLAVE PRODUCTO' in valores_fila or 'ID PRODUCTO' in valores_fila:
+            fila_encabezado = i
+            break
+    
+    # Volver a cargar el archivo comenzando exactamente en esa fila
+    archivo.seek(0)
+    if archivo.name.endswith('.csv'):
+        df = pd.read_csv(archivo, skiprows=fila_encabezado)
+    else:
+        df = pd.read_excel(archivo, skiprows=fila_encabezado)
+        
+    df.columns = df.columns.str.strip()
+    return df
+
 if archivo_cargado:
-    # Leer el archivo omitiendo las filas de encabezado basura de arriba
-    @st.cache_data
-    def cargar_datos(archivo):
-        if archivo.name.endswith('.csv'):
-            df = pd.read_csv(archivo, skiprows=10) # Ajusta según las filas vacías
-        else:
-            df = pd.read_excel(archivo, skiprows=10)
-        # Limpiar espacios en los nombres de columnas
-        df.columns = df.columns.str.strip()
-        return df
-
     try:
-            @st.cache_data
-    def cargar_datos(archivo):
-        # 1. Leer el archivo completo sin saltar nada primero
-        if archivo.name.endswith('.csv'):
-            df_crudo = pd.read_csv(archivo, header=None)
-        else:
-            df_crudo = pd.read_excel(archivo, header=None)
-        
-        # 2. Buscar en qué fila se encuentran los encabezados reales
-        fila_encabezado = 0
-        for i, row in df_crudo.iterrows():
-            # Convertir la fila a texto para buscar las columnas clave
-            valores_fila = [str(val).strip().upper() for val in row.values]
-            if 'CLAVE PRODUCTO' in valores_fila or 'ID PRODUCTO' in valores_fila:
-                fila_encabezado = i
-                break
-        
-        # 3. Volver a cargar el archivo comenzando exactamente en esa fila
-        archivo.seek(0) # Reiniciar el puntero del archivo
-        if archivo.name.endswith('.csv'):
-            df = pd.read_csv(archivo, skiprows=fila_encabezado)
-        else:
-            df = pd.read_excel(archivo, skiprows=fila_encabezado)
-            
-        # Limpiar espacios raros en los nombres de las columnas
-        df.columns = df.columns.str.strip()
-        return df
-
+        df_base = cargar_datos(archivo_cargado)
         
         # 2. Entrada de Presupuesto
         st.subheader("💰 Ingresa el Presupuesto Semanal Neto:")
@@ -138,9 +127,7 @@ if archivo_cargado:
                 if st.session_state.get("abrir_email", False):
                     correo_destino = st.text_input("Ingresa el correo del destinatario:")
                     if st.button("Confirmar Envío"):
-                        # Aquí procesamos el archivo final en memoria
                         output = io.BytesIO()
-                        # Volvemos a mapear los datos originales agregando las cantidades capturadas
                         df_final = df_base.copy()
                         df_final['CANTIDAD'] = df_final['CLAVE PRODUCTO'].map(
                             lambda x: st.session_state.carrito[x.strip()]['cantidad'] if x.strip() in st.session_state.carrito else ""
@@ -149,7 +136,6 @@ if archivo_cargado:
                         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                             df_final.to_excel(writer, index=False, sheet_name='Pedido')
                         
-                        # Simulación de envío exitoso (puedes conectar una API como SendGrid o SMTP de Gmail aquí)
                         st.success(f"¡Pedido enviado exitosamente a {correo_destino}!")
                         st.session_state.abrir_email = False
 
@@ -176,4 +162,4 @@ if archivo_cargado:
             st.info("El carrito está vacío. Escanea productos arriba para empezar.")
             
     except Exception as e:
-        st.error("Error al procesar el archivo. Asegúrate de que las columnas coincidan con el formato original.")
+        st.error(f"Error interno: {str(e)}")
