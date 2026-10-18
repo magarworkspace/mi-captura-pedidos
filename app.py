@@ -2,10 +2,7 @@ import streamlit as st
 import pandas as pd
 import io
 import urllib.parse
-import cv2
-import numpy as np
-# Componente de captura continua en vivo
-from camera_input_live import camera_input_live
+import streamlit.components.v1 as components
 
 # Configuración de la página para dispositivos móviles y tema oscuro
 st.set_page_config(page_title="Mi Captura de Pedidos", layout="centered")
@@ -76,37 +73,37 @@ if archivo_cargado:
         if scanner_manual:
             st.session_state.codigo_a_procesar = scanner_manual
 
-        # Opción B: Escáner de Video Continuo (Tiempo Real)
+        # Opción B: Escáner de Video HTML5 Nativo (Cámara Trasera)
         st.markdown("---")
-        st.write("📷 Coloca el código frente a la cámara (Asegúrate de otorgar permisos de cámara al navegador):")
+        st.write("📷 Video continuo con cámara trasera activa:")
         
-        # Componente que transmite imágenes de la cámara de manera continua sin botones obligatorios
-        imagen_en_vivo = camera_input_live(debounce=250) # Actualiza fluidamente cada 250ms
-        
-        if imagen_en_vivo is not None:
-            # CORRECCIÓN CLAVE: Desplegar el visor de video en la interfaz de Streamlit
-            st.image(imagen_en_vivo, caption="Visor de escaneo activo", use_container_width=True)
-            
-            # Solo procesamos si no tenemos un código pendiente de confirmación en pantalla
-            if not st.session_state.codigo_a_procesar:
-                bytes_data = imagen_en_vivo.read()
-                img_array = np.frombuffer(bytes_data, np.uint8)
-                img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-                
-                # Intentar decodificar códigos QR
-                detector_qr = cv2.QRCodeDetector()
-                datos_codigo, _, _ = detector_qr.detectAndDecode(img)
-                
-                # Si no es QR, intentamos leer código de barras clásico 1D
-                if not datos_codigo:
-                    try:
-                        detector_barras = cv2.barcode.BarcodeDetector()
-                        datos_codigo, _, _ = detector_barras.detectAndDecode(img)
-                    except AttributeError:
-                        pass
-                        
-                if datos_codigo:
-                    st.session_state.codigo_a_procesar = str(datos_codigo).strip()
+        # Inyección de la cámara nativa mediante JavaScript para evitar congelamientos
+        componente_html = """
+        <div style="text-align: center;">
+            <video id="video" width="100%" height="auto" style="border-radius: 10px; background-color: #161b22;" autoplay playsinline></video>
+            <p style="color: #8b949e; font-size: 14px; margin-top: 8px;">Apunta al texto o código de la refacción</p>
+        </div>
+        <script>
+            const video = document.getElementById('video');
+            // Forzamos nativamente el uso de la cámara trasera ('environment') y video continuo fluido
+            const constraints = {
+                video: { facingMode: { exact: "environment" } }
+            };
+
+            navigator.mediaDevices.getUserMedia(constraints)
+                .then((stream) => {
+                    video.srcObject = stream;
+                })
+                .catch((err) => {
+                    // Si falla el modo exacto (por ejemplo en PC), usamos cualquier cámara trasera disponible
+                    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+                        .then((stream) => { video.srcObject = stream; })
+                        .catch((e) => console.error("Error al abrir cámara: ", e));
+                });
+        </script>
+        """
+        # Desplegamos el visor nativo en la app móvil
+        components.html(componente_html, height=280)
 
         # Procesamiento del código obtenido
         if st.session_state.codigo_a_procesar:
@@ -115,8 +112,8 @@ if archivo_cargado:
             
             if not producto_match.empty:
                 idx = producto_match.index
-                desc = producto_match.loc[idx, 'DESCRIPCION'].values[0]
-                precio_uni = float(producto_match.loc[idx, 'PRECIO UNITARIO'].values[0])
+                desc = producto_match.loc[idx, 'DESCRIPCION'].values
+                precio_uni = float(producto_match.loc[idx, 'PRECIO UNITARIO'].values)
                 
                 st.success(f"Detectado: {desc}")
                 
