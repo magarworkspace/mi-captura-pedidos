@@ -32,11 +32,12 @@ if "confirmar_borrar" not in st.session_state:
 if "codigo_a_procesar" not in st.session_state:
     st.session_state.codigo_a_procesar = ""
 
-# Configuración de tu cuenta de correo emisora (Gratuito usando Gmail)
-# NOTA: Para producción, puedes guardar estos datos de forma segura en los "Secrets" de Streamlit Cloud.
+# ==============================================================================
+# ⚠️ CONFIGURACIÓN DE TU CORREO (DEJA LAS COMILLAS Y CAMBIA SOLO LO DE ADENTRO)
+# ==============================================================================
 EMAIL_EMISOR = "magarworkspace@gmail.com" 
-PASSWORD_EMISOR = "f6ZbKU.cPJurM5f"
-# Contraseña de aplicación generada en tu cuenta de Google
+PASSWORD_EMISOR = "f6ZbKU.cPJurM5f"  # Pon tus 16 letras pegadas y sin espacios
+# ==============================================================================
 
 # Función inteligente para buscar la fila de encabezados
 @st.cache_data
@@ -62,7 +63,7 @@ def cargar_datos(archivo):
     df.columns = df.columns.str.strip()
     return df
 
-# Función para enviar el correo real con el archivo adjunto
+# Función corregida con puerto SSL 465 directo para evitar el error -2
 def enviar_correo_con_adjunto(correo_destino, archivo_bytes):
     try:
         msg = MIMEMultipart()
@@ -79,9 +80,8 @@ def enviar_correo_con_adjunto(correo_destino, archivo_bytes):
         adjunto.add_header('Content-Disposition', 'attachment; filename="Pedido_Semanal.xlsx"')
         msg.attach(adjunto)
         
-        # Conexión al servidor SMTP de Gmail
-        server = smtplib.SMTP('://gmail.com', 587)
-        server.starttls()
+        # Conexión ultra segura directa al servidor de Gmail (Puerto 465)
+        server = smtplib.SMTP_SSL('://gmail.com', 465)
         server.login(EMAIL_EMISOR, PASSWORD_EMISOR)
         text = msg.as_string()
         server.sendmail(EMAIL_EMISOR, correo_destino, text)
@@ -106,14 +106,12 @@ if archivo_cargado:
         # 3. Módulo de Escaneo Inteligente
         st.subheader("🔍 Escanear Código de Barras (Clave)")
         
-        # Callback para procesar la entrada y limpiar la barra de inmediato
         def procesar_escaneo():
             st.session_state.codigo_a_procesar = st.session_state.scanner_input.strip()
-            st.session_state.scanner_input = "" # Limpia la barra de texto instantáneamente
+            st.session_state.scanner_input = ""
 
         st.text_input("Haz clic aquí antes de usar tu escáner/cámara", key="scanner_input", on_change=procesar_escaneo)
 
-        # Si hay un código capturado esperando ser procesado
         if st.session_state.codigo_a_procesar:
             codigo = st.session_state.codigo_a_procesar
             producto_match = df_base[df_base['CLAVE PRODUCTO'].str.strip() == codigo]
@@ -125,7 +123,6 @@ if archivo_cargado:
                 
                 st.success(f"Detectado: {desc}")
                 
-                # Formulario para definir cantidad y agregar
                 with st.form(key="form_agregar"):
                     cant = st.number_input(f"Cantidad para {codigo}:", min_value=1, value=1, step=1)
                     boton_confirmar = st.form_submit_button("Confirmar y Agregar")
@@ -136,7 +133,7 @@ if archivo_cargado:
                             "precio_unitario": precio_uni,
                             "cantidad": cant
                         }
-                        st.session_state.codigo_a_procesar = "" # Liberar el espacio
+                        st.session_state.codigo_a_procesar = ""
                         st.toast("¡Producto añadido!")
                         st.rerun()
             else:
@@ -174,7 +171,6 @@ if archivo_cargado:
                     if st.button("Confirmar Envío"):
                         output = io.BytesIO()
                         df_final = df_base.copy()
-                        # Mapear las cantidades capturadas al archivo original
                         df_final['CANTIDAD'] = df_final['CLAVE PRODUCTO'].map(
                             lambda x: st.session_state.carrito[x.strip()]['cantidad'] if x.strip() in st.session_state.carrito else ""
                         )
@@ -182,7 +178,6 @@ if archivo_cargado:
                         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                             df_final.to_excel(writer, index=False, sheet_name='Pedido')
                         
-                        # Ejecutar envío real
                         if enviar_correo_con_adjunto(correo_destino, output.getvalue()):
                             st.success(f"¡Pedido enviado con éxito a {correo_destino}!")
                         st.session_state.abrir_email = False
