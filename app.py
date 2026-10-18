@@ -1,11 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.base import MIMEBase
-from email import encoders
+import urllib.parse
 
 # Configuración de la página para dispositivos móviles y tema oscuro
 st.set_page_config(page_title="Mi Captura de Pedidos", layout="centered")
@@ -32,13 +28,6 @@ if "confirmar_borrar" not in st.session_state:
 if "codigo_a_procesar" not in st.session_state:
     st.session_state.codigo_a_procesar = ""
 
-# ==============================================================================
-# ⚠️ CONFIGURACIÓN DE TU CORREO (DEJA LAS COMILLAS Y CAMBIA SOLO LO DE ADENTRO)
-# ==============================================================================
-EMAIL_EMISOR = "magarworkspace@gmail.com" 
-PASSWORD_EMISOR = "f6ZbKU.cPJurM5f"  # Pon tus 16 letras pegadas y sin espacios
-# ==============================================================================
-
 # Función inteligente para buscar la fila de encabezados
 @st.cache_data
 def cargar_datos(archivo):
@@ -62,34 +51,6 @@ def cargar_datos(archivo):
         
     df.columns = df.columns.str.strip()
     return df
-
-# Función corregida con puerto SSL 465 directo para evitar el error -2
-def enviar_correo_con_adjunto(correo_destino, archivo_bytes):
-    try:
-        msg = MIMEMultipart()
-        msg['From'] = EMAIL_EMISOR
-        msg['To'] = correo_destino
-        msg['Subject'] = "Nuevo Pedido Semanal de Refacciones"
-        
-        cuerpo = "Hola, adjunto el archivo generado con el pedido de esta semana. Saludos."
-        msg.attach(MIMEText(cuerpo, 'plain'))
-        
-        adjunto = MIMEBase('application', 'octet-stream')
-        adjunto.set_payload(archivo_bytes)
-        encoders.encode_base64(adjunto)
-        adjunto.add_header('Content-Disposition', 'attachment; filename="Pedido_Semanal.xlsx"')
-        msg.attach(adjunto)
-        
-        # Conexión ultra segura directa al servidor de Gmail (Puerto 465)
-        server = smtplib.SMTP_SSL('://gmail.com', 465)
-        server.login(EMAIL_EMISOR, PASSWORD_EMISOR)
-        text = msg.as_string()
-        server.sendmail(EMAIL_EMISOR, correo_destino, text)
-        server.quit()
-        return True
-    except Exception as e:
-        st.error(f"Error al enviar el correo: {str(e)}")
-        return False
 
 # 1. Carga del Archivo
 st.subheader("📂 1. Arrastra aquí el Excel o CSV del proveedor")
@@ -163,41 +124,48 @@ if archivo_cargado:
             col1, col2 = st.columns(2)
             
             with col1:
-                if st.button("✉️ Enviar Pedido por E-mail"):
-                    st.session_state.abrir_email = True
-                    
-                if st.session_state.get("abrir_email", False):
-                    correo_destino = st.text_input("Ingresa el correo del destinatario:")
-                    if st.button("Confirmar Envío"):
-                        output = io.BytesIO()
-                        df_final = df_base.copy()
-                        df_final['CANTIDAD'] = df_final['CLAVE PRODUCTO'].map(
-                            lambda x: st.session_state.carrito[x.strip()]['cantidad'] if x.strip() in st.session_state.carrito else ""
-                        )
-                        
-                        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                            df_final.to_excel(writer, index=False, sheet_name='Pedido')
-                        
-                        if enviar_correo_con_adjunto(correo_destino, output.getvalue()):
-                            st.success(f"¡Pedido enviado con éxito a {correo_destino}!")
-                        st.session_state.abrir_email = False
+                # Generar el Excel en memoria para la descarga
+                output = io.BytesIO()
+                df_final = df_base.copy()
+                df_final['CANTIDAD'] = df_final['CLAVE PRODUCTO'].map(
+                    lambda x: st.session_state.carrito[x.strip()]['cantidad'] if x.strip() in st.session_state.carrito else ""
+                )
+                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    df_final.to_excel(writer, index=False, sheet_name='Pedido')
+                excel_data = output.getvalue()
+
+                # Botón de Descarga Nativa (Funciona perfecto en Celular y PC)
+                st.download_button(
+                    label="📥 Guardar Archivo Excel",
+                    data=excel_data,
+                    file_name="Pedido_Semanal.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+                
+                # Botón inteligente para abrir la App de Correo del celular
+                asunto = urllib.parse.quote("Nuevo Pedido Semanal de Refacciones")
+                cuerpo = urllib.parse.quote("Hola, te comparto el pedido semanal. Adjunto el archivo generado por la app.")
+                mailto_link = f"mailto:?subject={asunto}&body={cuerpo}"
+                
+                st.markdown(f'<a href="{mailto_link}" target="_blank"><button style="width:100%; padding:10px; background-color:#21262d; color:white; border:1px solid #30363d; border-radius:5px; font-weight:bold; cursor:pointer;">✉️ Redactar Correo</button></a>', unsafe_allow_html=True)
 
             with col2:
                 if not st.session_state.confirmar_borrar:
-                    if st.button("🧹 Clear"):
+                    if st.button("🧹 Clear", use_container_width=True):
                         st.session_state.confirmar_borrar = True
                         st.rerun()
                 else:
                     st.warning("⚠️ ¿Borrar todo el pedido?")
                     col_si, col_no = st.columns(2)
                     with col_si:
-                        if st.button("SÍ, BORRAR", type="primary"):
+                        if st.button("SÍ, BORRAR", type="primary", use_container_width=True):
                             st.session_state.carrito = {}
                             st.session_state.confirmar_borrar = False
                             st.toast("Pedido limpiado.")
                             st.rerun()
                     with col_no:
-                        if st.button("Cancelar"):
+                        if st.button("Cancelar", use_container_width=True):
                             st.session_state.confirmar_borrar = False
                             st.rerun()
         else:
