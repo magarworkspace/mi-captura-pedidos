@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 import io
 import urllib.parse
-from PIL import Image
-from pyzbar.pyzbar import decode
+import cv2
+import numpy as np
 
 # Configuración de la página para dispositivos móviles y tema oscuro
 st.set_page_config(page_title="Mi Captura de Pedidos", layout="centered")
@@ -56,7 +56,7 @@ def cargar_datos(archivo):
 
 # 1. Carga del Archivo
 st.subheader("📂 1. Arrastra aquí el Excel o CSV del proveedor")
-archivo_cargado = st.file_uploader("", type=["xlsx", "csv"], label_visibility="collapsed", key="file_base_uploader")
+archivo_cargado = st.file_uploader("", type=["xlsx", "csv"], label_visibility="collapsed")
 
 if archivo_cargado:
     try:
@@ -74,23 +74,42 @@ if archivo_cargado:
         if scanner_manual:
             st.session_state.codigo_a_procesar = scanner_manual
 
-        # Opción B: Captura de Foto asistida por el Teléfono Móvil
+        # Opción B: Captura de Foto con Cámara
         st.markdown("---")
-        st.write("📷 Presiona el botón para tomar una foto al código de barras:")
-        
-        # Al usar camera_input, Android abre la interfaz nativa del teléfono asegurando nitidez y enfoque
-        foto_refaccion = st.camera_input("", label_visibility="collapsed", key="refaccion_camera")
+        st.write("📷 Toma una foto enfocada al código de barras o QR:")
+        foto_refaccion = st.camera_input("", label_visibility="collapsed")
         
         if foto_refaccion is not None and not scanner_manual:
-            # Abrir la imagen capturada para procesarla con pyzbar
-            img_pil = Image.open(foto_refaccion)
-            codigos_encontrados = decode(img_pil)
+            # Convertir la foto en un formato que OpenCV pueda entender
+            bytes_data = foto_refaccion.read()
+            img_array = np.frombuffer(bytes_data, np.uint8)
+            img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
             
-            if codigos_encontrados:
-                # Extraemos el primer código de barras detectado en la imagen
-                st.session_state.codigo_a_procesar = codigos_encontrados[0].data.decode('utf-8').strip()
+            datos_codigo = ""
+            
+            # Intentar primero detectar Códigos de Barras tradicionales de refacciones
+            try:
+                detector_barras = cv2.barcode.BarcodeDetector()
+                ok, decoded_info, decoded_type, _ = detector_barras.detectAndDecode(img)
+                if ok and decoded_info:
+                    datos_codigo = decoded_info[0].strip()
+            except Exception:
+                pass
+            
+            # Si no encontró código de barras, intentar con códigos QR
+            if not datos_codigo:
+                try:
+                    detector_qr = cv2.QRCodeDetector()
+                    val_qr, _, _ = detector_qr.detectAndDecode(img)
+                    if val_qr:
+                        datos_codigo = val_qr.strip()
+                except Exception:
+                    pass
+            
+            if datos_codigo:
+                st.session_state.codigo_a_procesar = datos_codigo
             else:
-                st.warning("⚠️ No se detectó ningún código de barras en la foto. Intenta enfocar más de cerca o usar buena iluminación.")
+                st.warning("⚠️ No se pudo leer el código. Asegúrate de que la etiqueta esté bien iluminada, plana y bien enfocada antes de capturar.")
 
         # Procesamiento del código obtenido
         if st.session_state.codigo_a_procesar:
@@ -99,8 +118,8 @@ if archivo_cargado:
             
             if not producto_match.empty:
                 idx = producto_match.index
-                desc = producto_match.loc[idx, 'DESCRIPCION'].values[0]
-                precio_uni = float(producto_match.loc[idx, 'PRECIO UNITARIO'].values[0])
+                desc = producto_match.loc[idx, 'DESCRIPCION'].values
+                precio_uni = float(producto_match.loc[idx, 'PRECIO UNITARIO'].values)
                 
                 st.success(f"Detectado: {desc}")
                 
@@ -187,4 +206,4 @@ if archivo_cargado:
                             st.session_state.confirmar_borrar = False
                             st.rerun()
     except Exception as e:
-        st.error(f"Error general en la ejecución: {e}")
+        st.error(f"Error en la ejecución de la app: {e}")
