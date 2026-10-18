@@ -1,5 +1,3 @@
 streamlit
 pandas
 openpyxl
-streamlit-camera-input-live
-opencv-python-headless
