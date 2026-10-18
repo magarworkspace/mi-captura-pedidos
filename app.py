@@ -2,11 +2,11 @@ import streamlit as st
 import pandas as pd
 import io
 import urllib.parse
-import streamlit.components.v1 as components
 
 # Configuración de la página para dispositivos móviles y tema oscuro
 st.set_page_config(page_title="Mi Captura de Pedidos", layout="centered")
 
+# Estilos personalizados (CSS inyectado)
 st.markdown("""
     <style>
     .main { background-color: #0d1117; }
@@ -25,13 +25,6 @@ if "carrito" not in st.session_state:
     st.session_state.carrito = {}
 if "confirmar_borrar" not in st.session_state:
     st.session_state.confirmar_borrar = False
-
-# Capturar el código enviado por el escáner de tiempo real
-query_params = st.query_params
-if "code_scanned" in query_params:
-    st.session_state.codigo_a_procesar = query_params["code_scanned"]
-    st.query_params.clear()
-
 if "codigo_a_procesar" not in st.session_state:
     st.session_state.codigo_a_procesar = ""
 
@@ -70,98 +63,70 @@ if archivo_cargado:
         st.subheader("💰 Ingresa el Presupuesto Semanal:")
         presupuesto = st.number_input("", min_value=0.0, value=50000.0, step=1000.0, label_visibility="collapsed")
 
-        # 3. Módulo de Escaneo y Búsqueda por Voz
-        st.subheader("🔍 Módulo de Escaneo y Búsqueda")
+        # 3. Módulo Único de Búsqueda (Soporta SKU, Escritura o Voz mediante el micrófono de tu teclado)
+        st.subheader("🔍 Módulo de Búsqueda e Inserción")
         
-        busqueda = st.text_input("🎙️ Toca aquí para dictar por voz o escribir (Ej: Bomba agua duster):", key="search_input").strip()
+        busqueda = st.text_input("🎙️ Escribe SKU o dicta el artículo (Ej: G-93278547 o bomba agua duster):", key="search_input").strip()
         
         if busqueda:
-            palabras = busqueda.lower().split()
-            filtro = df_base['DESCRIPCION'].str.lower().fillna('')
-            for palabra in palabras:
-                filtro = filtro & filtro.str.contains(palabra)
+            busqueda_clean = busqueda.upper().strip()
             
-            resultados = df_base[filtro]
+            # Intento 1: Verificar si es exactamente un SKU / Clave de Producto de la lista
+            match_sku = df_base[df_base['CLAVE PRODUCTO'].str.strip().str.upper() == busqueda_clean]
             
-            if not resultados.empty:
-                st.write("✨ Productos encontrados:")
-                for index, row in resultados.head(5).iterrows():
-                    clave = row['CLAVE PRODUCTO']
-                    desc_prod = row['DESCRIPCION']
-                    precio_p = row['PRECIO UNITARIO']
-                    if st.button(f"➕ {desc_prod} [${precio_p} MXN]", key=f"btn_{clave}"):
-                        st.session_state.codigo_a_procesar = clave
-                        st.rerun()
+            if not match_sku.empty:
+                # Si es un SKU válido, lo guardamos directo para procesarlo abajo
+                st.session_state.codigo_a_procesar = match_sku.iloc[0]['CLAVE PRODUCTO'].strip()
             else:
-                st.caption("No se encontraron refacciones con esas palabras clave.")
-
-        st.markdown("---")
-        st.write("📷 Cámara trasera activa (Escaneo automático continuo sin tomar fotos):")
-        
-        escaner_html5 = """
-        <div style="text-align: center; width: 100%; max-width: 480px; margin: 0 auto; background: #161b22; border-radius: 10px; overflow: hidden; position: relative;">
-            <video id="video_stream" style="width: 100%; height: 240px; object-fit: cover;"></video>
-            <div style="position: absolute; top: 50%; left: 5%; width: 90%; height: 2px; background: #00ff00; opacity: 0.8; transform: translateY(-50%); box-shadow: 0 0 6px #00ff00;"></div>
-        </div>
-        
-        <script type="text/javascript" src="https://unpkg.com"></script>
-        <script type="text/javascript">
-            window.addEventListener('load', function () {
-                const codeReader = new ZXing.BrowserMultiFormatReader();
-                const videoElement = document.getElementById('video_stream');
-
-                codeReader.listVideoInputDevices()
-                    .then((videoInputDevices) => {
-                        const constraints = {
-                            video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }
-                        };
+                # Intento 2: Si no es un SKU, filtramos por descripción usando un método seguro paso a paso
+                palabras = busqueda.lower().split()
+                # Empezamos con una máscara de Verdaderos (True) del mismo tamaño que las filas
+                mascara = pd.Series([True] * len(df_base), index=df_base.index)
+                
+                descripcion_col = df_base['DESCRIPCION'].str.lower().fillna('')
+                for palabra in palabras:
+                    mascara = mascara & descripcion_col.str.contains(palabra, regex=False)
+                
+                resultados = df_base[mascara]
+                
+                if not resultados.empty:
+                    st.write("✨ Coincidencias encontradas (Toca una para seleccionarla):")
+                    for index, row in resultados.head(5).iterrows():
+                        clave_r = row['CLAVE PRODUCTO']
+                        desc_r = row['DESCRIPCION']
+                        precio_r = row['PRECIO UNITARIO']
                         
-                        codeReader.decodeFromConstraints(constraints, 'video_stream', (result, err) => {
-                            if (result) {
-                                const code = result.text.trim();
-                                const url = new URL(window.parent.location.href);
-                                url.searchParams.set("code_scanned", code);
-                                window.parent.location.href = url.href;
-                                codeReader.reset();
-                            }
-                        });
-                    })
-                    .catch((err) => {
-                        console.error("Error con la cámara:", err);
-                    });
-            });
-        </script>
-        """
-        components.html(escaner_html5, height=270)
+                        if st.button(f"📦 {desc_r} | ${precio_r} MXN", key=f"sel_{clave_r}"):
+                            st.session_state.codigo_a_procesar = str(clave_r).strip()
+                            st.rerun()
+                else:
+                    st.error(f"❌ '{busqueda}' no coincide con ningún SKU ni descripción.")
 
-        # Procesamiento del código obtenido
+        # Formulario dinámico para agregar la cantidad del artículo seleccionado
         if st.session_state.codigo_a_procesar:
             codigo = st.session_state.codigo_a_procesar
             producto_match = df_base[df_base['CLAVE PRODUCTO'].str.strip() == codigo]
             
             if not producto_match.empty:
-                idx = producto_match.index
-                desc = producto_match.loc[idx, 'DESCRIPCION'].values
-                precio_uni = float(producto_match.loc[idx, 'PRECIO UNITARIO'].values)
+                idx = producto_match.index[0]
+                desc = df_base.loc[idx, 'DESCRIPCION']
+                precio_uni = float(df_base.loc[idx, 'PRECIO UNITARIO'])
                 
-                st.success(f"Detectado: {desc}")
+                st.success(f"Seleccionado: {desc}")
                 
-                with st.form(key="form_agregar"):
+                with st.form(key="form_agregar_pedido"):
                     cant = st.number_input(f"Cantidad para {codigo}:", min_value=1, value=1, step=1)
-                    if st.form_submit_button("Confirmar y Agregar"):
+                    if st.form_submit_button("Confirmar y Agregar al Carrito"):
                         st.session_state.carrito[codigo] = {
                             "descripcion": desc,
                             "precio_unitario": precio_uni,
                             "cantidad": cant
                         }
                         st.session_state.codigo_a_procesar = ""
-                        st.toast("¡Producto añadido!")
+                        st.toast("¡Añadido al pedido con éxito!")
                         st.rerun()
             else:
-                st.error(f"Código '{codigo}' no encontrado en la lista de precios.")
-                if st.button("Limpiar escáner"):
-                    st.session_state.codigo_a_procesar = ""
-                    st.rerun()
+                st.session_state.codigo_a_procesar = ""
 
         # 4. Cálculos y Resumen del Pedido
         st.subheader("📊 Resumen del Pedido")
@@ -202,7 +167,7 @@ if archivo_cargado:
                 )
                 
                 asunto = urllib.parse.quote("Nuevo Pedido Semanal de Refacciones")
-                cuerpo = urllib.parse.quote("Hola, te comparto el pedido semanal. Adjunto el archivo generado por la app.")
+                cuerpo = urllib.parse.quote("Hola, te comparto el pedido semanal.")
                 mailto_link = f"mailto:?subject={asunto}&body={cuerpo}"
                 st.markdown(f'<a href="{mailto_link}" target="_blank"><button style="width:100%; padding:10px; background-color:#21262d; color:white; border:1px solid #30363d; border-radius:5px; font-weight:bold; cursor:pointer;">✉️ Redactar Correo</button></a>', unsafe_allow_html=True)
 
@@ -212,7 +177,7 @@ if archivo_cargado:
                         st.session_state.confirmar_borrar = True
                         st.rerun()
                 else:
-                    st.warning("⚠️ ¿Borrar todo el pedido?")
+                    st.warning("⚠️ ¿Borrar todo?")
                     col_si, col_no = st.columns(2)
                     with col_si:
                         if st.button("SÍ, BORRAR", type="primary", use_container_width=True):
