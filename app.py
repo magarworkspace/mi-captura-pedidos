@@ -4,7 +4,7 @@ import io
 import urllib.parse
 import cv2
 import numpy as np
-# Importamos el componente de captura continua en vivo
+# Componente de captura continua en vivo
 from camera_input_live import camera_input_live
 
 # Configuración de la página para dispositivos móviles y tema oscuro
@@ -78,31 +78,35 @@ if archivo_cargado:
 
         # Opción B: Escáner de Video Continuo (Tiempo Real)
         st.markdown("---")
-        st.write("📷 Coloca el código frente a la cámara trasera (Escaneo continuo automático):")
+        st.write("📷 Coloca el código frente a la cámara (Asegúrate de otorgar permisos de cámara al navegador):")
         
-        # Este componente transmite imágenes constantemente sin forzar un "Click"
-        imagen_en_vivo = camera_input_live()
+        # Componente que transmite imágenes de la cámara de manera continua sin botones obligatorios
+        imagen_en_vivo = camera_input_live(debounce=250) # Actualiza fluidamente cada 250ms
         
-        if imagen_en_vivo is not None and not st.session_state.codigo_a_procesar:
-            # Convertir la imagen capturada para que OpenCV la analice
-            bytes_data = imagen_en_vivo.read()
-            img_array = np.frombuffer(bytes_data, np.uint8)
-            img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        if imagen_en_vivo is not None:
+            # CORRECCIÓN CLAVE: Desplegar el visor de video en la interfaz de Streamlit
+            st.image(imagen_en_vivo, caption="Visor de escaneo activo", use_container_width=True)
             
-            # Intentar decodificar códigos QR o Barras estándar usando OpenCV
-            detector_qr = cv2.QRCodeDetector()
-            datos_codigo, _, _ = detector_qr.detectAndDecode(img)
-            
-            # Si no es QR, intentamos leer código de barras clásico 1D
-            if not datos_codigo:
-                try:
-                    detector_barras = cv2.barcode.BarcodeDetector()
-                    datos_codigo, _, _ = detector_barras.detectAndDecode(img)
-                except AttributeError:
-                    pass # Evita fallos si la versión de opencv procesa distinto
-                    
-            if datos_codigo:
-                st.session_state.codigo_a_procesar = str(datos_codigo).strip()
+            # Solo procesamos si no tenemos un código pendiente de confirmación en pantalla
+            if not st.session_state.codigo_a_procesar:
+                bytes_data = imagen_en_vivo.read()
+                img_array = np.frombuffer(bytes_data, np.uint8)
+                img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+                
+                # Intentar decodificar códigos QR
+                detector_qr = cv2.QRCodeDetector()
+                datos_codigo, _, _ = detector_qr.detectAndDecode(img)
+                
+                # Si no es QR, intentamos leer código de barras clásico 1D
+                if not datos_codigo:
+                    try:
+                        detector_barras = cv2.barcode.BarcodeDetector()
+                        datos_codigo, _, _ = detector_barras.detectAndDecode(img)
+                    except AttributeError:
+                        pass
+                        
+                if datos_codigo:
+                    st.session_state.codigo_a_procesar = str(datos_codigo).strip()
 
         # Procesamiento del código obtenido
         if st.session_state.codigo_a_procesar:
