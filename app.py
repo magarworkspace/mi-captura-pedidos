@@ -2,13 +2,11 @@ import streamlit as st
 import pandas as pd
 import io
 import urllib.parse
-import cv2
-import numpy as np
+import streamlit.components.v1 as components
 
 # Configuración de la página para dispositivos móviles y tema oscuro
 st.set_page_config(page_title="Mi Captura de Pedidos", layout="centered")
 
-# Estilos personalizados (CSS inyectado)
 st.markdown("""
     <style>
     .main { background-color: #0d1117; }
@@ -27,6 +25,13 @@ if "carrito" not in st.session_state:
     st.session_state.carrito = {}
 if "confirmar_borrar" not in st.session_state:
     st.session_state.confirmar_borrar = False
+
+# Capturar el código enviado por el escáner de tiempo real
+query_params = st.query_params
+if "code_scanned" in query_params:
+    st.session_state.codigo_a_procesar = query_params["code_scanned"]
+    st.query_params.clear()
+
 if "codigo_a_procesar" not in st.session_state:
     st.session_state.codigo_a_procesar = ""
 
@@ -57,7 +62,6 @@ def cargar_datos(archivo):
 # 1. Carga del Archivo
 st.subheader("📂 1. Arrastra aquí el Excel o CSV del proveedor")
 archivo_cargado = st.file_uploader("", type=["xlsx", "csv"], label_visibility="collapsed")
-
 if archivo_cargado:
     try:
         df_base = cargar_datos(archivo_cargado)
@@ -66,50 +70,69 @@ if archivo_cargado:
         st.subheader("💰 Ingresa el Presupuesto Semanal:")
         presupuesto = st.number_input("", min_value=0.0, value=50000.0, step=1000.0, label_visibility="collapsed")
 
-        # 3. Módulo de Escaneo Nativo
-        st.subheader("🔍 Módulo de Escaneo")
+        # 3. Módulo de Escaneo y Búsqueda por Voz
+        st.subheader("🔍 Módulo de Escaneo y Búsqueda")
         
-        # Opción A: Escaneo Manual con Teclado
-        scanner_manual = st.text_input("Escribe el código manualmente si lo prefieres:", key="manual_input").strip()
-        if scanner_manual:
-            st.session_state.codigo_a_procesar = scanner_manual
-
-        # Opción B: Captura de Foto con Cámara
-        st.markdown("---")
-        st.write("📷 Toma una foto enfocada al código de barras o QR:")
-        foto_refaccion = st.camera_input("", label_visibility="collapsed")
+        busqueda = st.text_input("🎙️ Toca aquí para dictar por voz o escribir (Ej: Bomba agua duster):", key="search_input").strip()
         
-        if foto_refaccion is not None and not scanner_manual:
-            # Convertir la foto en un formato que OpenCV pueda entender
-            bytes_data = foto_refaccion.read()
-            img_array = np.frombuffer(bytes_data, np.uint8)
-            img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        if busqueda:
+            palabras = busqueda.lower().split()
+            filtro = df_base['DESCRIPCION'].str.lower().fillna('')
+            for palabra in palabras:
+                filtro = filtro & filtro.str.contains(palabra)
             
-            datos_codigo = ""
+            resultados = df_base[filtro]
             
-            # Intentar primero detectar Códigos de Barras tradicionales de refacciones
-            try:
-                detector_barras = cv2.barcode.BarcodeDetector()
-                ok, decoded_info, decoded_type, _ = detector_barras.detectAndDecode(img)
-                if ok and decoded_info:
-                    datos_codigo = decoded_info[0].strip()
-            except Exception:
-                pass
-            
-            # Si no encontró código de barras, intentar con códigos QR
-            if not datos_codigo:
-                try:
-                    detector_qr = cv2.QRCodeDetector()
-                    val_qr, _, _ = detector_qr.detectAndDecode(img)
-                    if val_qr:
-                        datos_codigo = val_qr.strip()
-                except Exception:
-                    pass
-            
-            if datos_codigo:
-                st.session_state.codigo_a_procesar = datos_codigo
+            if not resultados.empty:
+                st.write("✨ Productos encontrados:")
+                for index, row in resultados.head(5).iterrows():
+                    clave = row['CLAVE PRODUCTO']
+                    desc_prod = row['DESCRIPCION']
+                    precio_p = row['PRECIO UNITARIO']
+                    if st.button(f"➕ {desc_prod} [${precio_p} MXN]", key=f"btn_{clave}"):
+                        st.session_state.codigo_a_procesar = clave
+                        st.rerun()
             else:
-                st.warning("⚠️ No se pudo leer el código. Asegúrate de que la etiqueta esté bien iluminada, plana y bien enfocada antes de capturar.")
+                st.caption("No se encontraron refacciones con esas palabras clave.")
+
+        st.markdown("---")
+        st.write("📷 Cámara trasera activa (Escaneo automático continuo sin tomar fotos):")
+        
+        escaner_html5 = """
+        <div style="text-align: center; width: 100%; max-width: 480px; margin: 0 auto; background: #161b22; border-radius: 10px; overflow: hidden; position: relative;">
+            <video id="video_stream" style="width: 100%; height: 240px; object-fit: cover;"></video>
+            <div style="position: absolute; top: 50%; left: 5%; width: 90%; height: 2px; background: #00ff00; opacity: 0.8; transform: translateY(-50%); box-shadow: 0 0 6px #00ff00;"></div>
+        </div>
+        
+        <script type="text/javascript" src="https://unpkg.com"></script>
+        <script type="text/javascript">
+            window.addEventListener('load', function () {
+                const codeReader = new ZXing.BrowserMultiFormatReader();
+                const videoElement = document.getElementById('video_stream');
+
+                codeReader.listVideoInputDevices()
+                    .then((videoInputDevices) => {
+                        const constraints = {
+                            video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }
+                        };
+                        
+                        codeReader.decodeFromConstraints(constraints, 'video_stream', (result, err) => {
+                            if (result) {
+                                const code = result.text.trim();
+                                const url = new URL(window.parent.location.href);
+                                url.searchParams.set("code_scanned", code);
+                                window.parent.location.href = url.href;
+                                codeReader.reset();
+                            }
+                        });
+                    })
+                    .catch((err) => {
+                        console.error("Error con la cámara:", err);
+                    });
+            });
+        </script>
+        """
+        components.html(escaner_html5, height=270)
 
         # Procesamiento del código obtenido
         if st.session_state.codigo_a_procesar:
@@ -125,9 +148,7 @@ if archivo_cargado:
                 
                 with st.form(key="form_agregar"):
                     cant = st.number_input(f"Cantidad para {codigo}:", min_value=1, value=1, step=1)
-                    boton_confirmar = st.form_submit_button("Confirmar y Agregar")
-                    
-                    if boton_confirmar:
+                    if st.form_submit_button("Confirmar y Agregar"):
                         st.session_state.carrito[codigo] = {
                             "descripcion": desc,
                             "precio_unitario": precio_uni,
@@ -138,7 +159,7 @@ if archivo_cargado:
                         st.rerun()
             else:
                 st.error(f"Código '{codigo}' no encontrado en la lista de precios.")
-                if st.button("Intentar escanear de nuevo"):
+                if st.button("Limpiar escáner"):
                     st.session_state.codigo_a_procesar = ""
                     st.rerun()
 
@@ -161,7 +182,6 @@ if archivo_cargado:
             df_carrito = pd.DataFrame.from_dict(st.session_state.carrito, orient='index')
             st.dataframe(df_carrito[['descripcion', 'cantidad', 'precio_unitario']], use_container_width=True)
 
-            # --- SECCIÓN DE BOTONES DE ACCIÓN ---
             col1, col2 = st.columns(2)
             
             with col1:
@@ -172,11 +192,10 @@ if archivo_cargado:
                 )
                 with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                     df_final.to_excel(writer, index=False, sheet_name='Pedido')
-                excel_data = output.getvalue()
-
+                
                 st.download_button(
                     label="📥 Guardar Archivo Excel",
-                    data=excel_data,
+                    data=output.getvalue(),
                     file_name="Pedido_Semanal.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True
@@ -185,7 +204,6 @@ if archivo_cargado:
                 asunto = urllib.parse.quote("Nuevo Pedido Semanal de Refacciones")
                 cuerpo = urllib.parse.quote("Hola, te comparto el pedido semanal. Adjunto el archivo generado por la app.")
                 mailto_link = f"mailto:?subject={asunto}&body={cuerpo}"
-                
                 st.markdown(f'<a href="{mailto_link}" target="_blank"><button style="width:100%; padding:10px; background-color:#21262d; color:white; border:1px solid #30363d; border-radius:5px; font-weight:bold; cursor:pointer;">✉️ Redactar Correo</button></a>', unsafe_allow_html=True)
 
             with col2:
