@@ -64,14 +64,25 @@ if archivo_cargado:
         st.subheader("💰 Ingresa el Presupuesto Semanal:")
         presupuesto = st.number_input("", min_value=0.0, value=50000.0, step=1000.0, label_visibility="collapsed")
 
-        # 3. Módulo de Escaneo Inteligente
-        st.subheader("🔍 Escanear Código de Barras (Clave)")
+        # 3. Módulo de Escaneo con Cámara Integrada
+        st.subheader("🔍 Módulo de Escaneo")
         
-        def procesar_escaneo():
-            st.session_state.codigo_a_procesar = st.session_state.scanner_input.strip()
-            st.session_state.scanner_input = ""
+        # Opción A: Escaneo Manual con Teclado
+        scanner_manual = st.text_input("Escribe el código manualmente si lo prefieres:", key="manual_input").strip()
+        if scanner_manual:
+            st.session_state.codigo_a_procesar = scanner_manual
 
-        st.text_input("Haz clic aquí antes de usar tu escáner/cámara", key="scanner_input", on_change=procesar_escaneo)
+        # Opción B: Botón de Cámara Nativa del Navegador
+        st.markdown("---")
+        st.write("📷 O abre la cámara para escanear el código escrito en la etiqueta:")
+        foto_camara = st.camera_input("", label_visibility="collapsed")
+        
+        # NOTA: Como Streamlit no procesa códigos de barras directamente sin librerías pesadas, 
+        # tu vivo V40 Lite usará su IA interna al abrir la cámara para leer el texto de la etiqueta si dejas el dedo presionado,
+        # o puedes tomar la foto fija de la etiqueta para verla en pantalla.
+        
+        if st.session_state.codigo_a_procesar == "" and scanner_manual != "":
+            st.session_state.codigo_a_procesar = scanner_manual
 
         if st.session_state.codigo_a_procesar:
             codigo = st.session_state.codigo_a_procesar
@@ -79,8 +90,8 @@ if archivo_cargado:
             
             if not producto_match.empty:
                 idx = producto_match.index
-                desc = producto_match.loc[idx, 'DESCRIPCION'].values[0]
-                precio_uni = float(producto_match.loc[idx, 'PRECIO UNITARIO'].values[0])
+                desc = producto_match.loc[idx, 'DESCRIPCION'].values
+                precio_uni = float(producto_match.loc[idx, 'PRECIO UNITARIO'].values)
                 
                 st.success(f"Detectado: {desc}")
                 
@@ -124,7 +135,6 @@ if archivo_cargado:
             col1, col2 = st.columns(2)
             
             with col1:
-                # Generar el Excel en memoria para la descarga
                 output = io.BytesIO()
                 df_final = df_base.copy()
                 df_final['CANTIDAD'] = df_final['CLAVE PRODUCTO'].map(
@@ -134,7 +144,6 @@ if archivo_cargado:
                     df_final.to_excel(writer, index=False, sheet_name='Pedido')
                 excel_data = output.getvalue()
 
-                # Botón de Descarga Nativa (Funciona perfecto en Celular y PC)
                 st.download_button(
                     label="📥 Guardar Archivo Excel",
                     data=excel_data,
@@ -143,7 +152,6 @@ if archivo_cargado:
                     use_container_width=True
                 )
                 
-                # Botón inteligente para abrir la App de Correo del celular
                 asunto = urllib.parse.quote("Nuevo Pedido Semanal de Refacciones")
                 cuerpo = urllib.parse.quote("Hola, te comparto el pedido semanal. Adjunto el archivo generado por la app.")
                 mailto_link = f"mailto:?subject={asunto}&body={cuerpo}"
