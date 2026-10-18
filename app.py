@@ -2,8 +2,10 @@ import streamlit as st
 import pandas as pd
 import io
 import urllib.parse
-# 1. Importamos la nueva librería para escaneo en tiempo real
-from streamlit_qr_barcode_scanner import streamlit_qr_barcode_scanner
+import cv2
+import numpy as np
+# Importamos el componente de captura continua en vivo
+from camera_input_live import camera_input_live
 
 # Configuración de la página para dispositivos móviles y tema oscuro
 st.set_page_config(page_title="Mi Captura de Pedidos", layout="centered")
@@ -74,19 +76,35 @@ if archivo_cargado:
         if scanner_manual:
             st.session_state.codigo_a_procesar = scanner_manual
 
-        # Opción B: Escáner en vivo y en tiempo real
+        # Opción B: Escáner de Video Continuo (Tiempo Real)
         st.markdown("---")
-        st.write("📷 Apunta con la cámara al código de barras o código QR:")
+        st.write("📷 Coloca el código frente a la cámara trasera (Escaneo continuo automático):")
         
-        # Este bloque lee de forma continua. En cuanto detecta un código, guarda el texto automáticamente.
-        resultado_escaneo = streamlit_qr_barcode_scanner(port_setup="back") # "back" fuerza la cámara trasera del celular
+        # Este componente transmite imágenes constantemente sin forzar un "Click"
+        imagen_en_vivo = camera_input_live()
         
-        if resultado_escaneo and resultado_escaneo.get("type") is not None:
-            codigo_detectado = resultado_escaneo.get("data", "").strip()
-            if codigo_detectado:
-                st.session_state.codigo_a_procesar = codigo_detectado
+        if imagen_en_vivo is not None and not st.session_state.codigo_a_procesar:
+            # Convertir la imagen capturada para que OpenCV la analice
+            bytes_data = imagen_en_vivo.read()
+            img_array = np.frombuffer(bytes_data, np.uint8)
+            img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+            
+            # Intentar decodificar códigos QR o Barras estándar usando OpenCV
+            detector_qr = cv2.QRCodeDetector()
+            datos_codigo, _, _ = detector_qr.detectAndDecode(img)
+            
+            # Si no es QR, intentamos leer código de barras clásico 1D
+            if not datos_codigo:
+                try:
+                    detector_barras = cv2.barcode.BarcodeDetector()
+                    datos_codigo, _, _ = detector_barras.detectAndDecode(img)
+                except AttributeError:
+                    pass # Evita fallos si la versión de opencv procesa distinto
+                    
+            if datos_codigo:
+                st.session_state.codigo_a_procesar = str(datos_codigo).strip()
 
-        # Procesamiento del código obtenido (Vía teclado o Vía Escáner en Vivo)
+        # Procesamiento del código obtenido
         if st.session_state.codigo_a_procesar:
             codigo = st.session_state.codigo_a_procesar
             producto_match = df_base[df_base['CLAVE PRODUCTO'].str.strip() == codigo]
@@ -113,8 +131,7 @@ if archivo_cargado:
                         st.rerun()
             else:
                 st.error(f"Código '{codigo}' no encontrado en la lista de precios.")
-                # Damos un botón para limpiar el error y poder seguir escaneando otra cosa
-                if st.button("Escanear de nuevo"):
+                if st.button("Limpiar y volver a escanear"):
                     st.session_state.codigo_a_procesar = ""
                     st.rerun()
 
