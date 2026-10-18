@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import io
 import urllib.parse
+# 1. Importamos la nueva librería para escaneo en tiempo real
+from streamlit_qr_barcode_scanner import streamlit_qr_barcode_scanner
 
 # Configuración de la página para dispositivos móviles y tema oscuro
 st.set_page_config(page_title="Mi Captura de Pedidos", layout="centered")
@@ -72,26 +74,27 @@ if archivo_cargado:
         if scanner_manual:
             st.session_state.codigo_a_procesar = scanner_manual
 
-        # Opción B: Botón de Cámara Nativa del Navegador
+        # Opción B: Escáner en vivo y en tiempo real
         st.markdown("---")
-        st.write("📷 O abre la cámara para escanear el código escrito en la etiqueta:")
-        foto_camara = st.camera_input("", label_visibility="collapsed")
+        st.write("📷 Apunta con la cámara al código de barras o código QR:")
         
-        # NOTA: Como Streamlit no procesa códigos de barras directamente sin librerías pesadas, 
-        # tu vivo V40 Lite usará su IA interna al abrir la cámara para leer el texto de la etiqueta si dejas el dedo presionado,
-        # o puedes tomar la foto fija de la etiqueta para verla en pantalla.
+        # Este bloque lee de forma continua. En cuanto detecta un código, guarda el texto automáticamente.
+        resultado_escaneo = streamlit_qr_barcode_scanner(port_setup="back") # "back" fuerza la cámara trasera del celular
         
-        if st.session_state.codigo_a_procesar == "" and scanner_manual != "":
-            st.session_state.codigo_a_procesar = scanner_manual
+        if resultado_escaneo and resultado_escaneo.get("type") is not None:
+            codigo_detectado = resultado_escaneo.get("data", "").strip()
+            if codigo_detectado:
+                st.session_state.codigo_a_procesar = codigo_detectado
 
+        # Procesamiento del código obtenido (Vía teclado o Vía Escáner en Vivo)
         if st.session_state.codigo_a_procesar:
             codigo = st.session_state.codigo_a_procesar
             producto_match = df_base[df_base['CLAVE PRODUCTO'].str.strip() == codigo]
             
             if not producto_match.empty:
                 idx = producto_match.index
-                desc = producto_match.loc[idx, 'DESCRIPCION'].values
-                precio_uni = float(producto_match.loc[idx, 'PRECIO UNITARIO'].values)
+                desc = producto_match.loc[idx, 'DESCRIPCION'].values[0]
+                precio_uni = float(producto_match.loc[idx, 'PRECIO UNITARIO'].values[0])
                 
                 st.success(f"Detectado: {desc}")
                 
@@ -110,7 +113,10 @@ if archivo_cargado:
                         st.rerun()
             else:
                 st.error(f"Código '{codigo}' no encontrado en la lista de precios.")
-                st.session_state.codigo_a_procesar = ""
+                # Damos un botón para limpiar el error y poder seguir escaneando otra cosa
+                if st.button("Escanear de nuevo"):
+                    st.session_state.codigo_a_procesar = ""
+                    st.rerun()
 
         # 4. Cálculos y Resumen del Pedido
         st.subheader("📊 Resumen del Pedido")
@@ -170,14 +176,10 @@ if archivo_cargado:
                         if st.button("SÍ, BORRAR", type="primary", use_container_width=True):
                             st.session_state.carrito = {}
                             st.session_state.confirmar_borrar = False
-                            st.toast("Pedido limpiado.")
                             st.rerun()
                     with col_no:
-                        if st.button("Cancelar", use_container_width=True):
+                        if st.button("NO, CANCELAR", use_container_width=True):
                             st.session_state.confirmar_borrar = False
                             st.rerun()
-        else:
-            st.info("El carrito está vacío. Escanea productos arriba para empezar.")
-            
     except Exception as e:
-        st.error(f"Error interno: {str(e)}")
+        st.error(f"Error al procesar el archivo o la información: {e}")
