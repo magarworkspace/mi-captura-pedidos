@@ -56,6 +56,11 @@ def cargar_datos(archivo):
     df.columns = df.columns.str.strip()
     return df
 
+# Función callback para seleccionar un producto y limpiar la búsqueda de forma segura
+def seleccionar_producto(clave):
+    st.session_state.codigo_a_procesar = str(clave).strip()
+    st.session_state.search_input = ""  # Se limpia de forma segura antes de renderizar el widget
+
 # 1. Carga del Archivo
 st.subheader("📂 1. Arrastra aquí el Excel o CSV del proveedor")
 archivo_cargado = st.file_uploader("", type=["xlsx", "csv"], label_visibility="collapsed")
@@ -66,7 +71,7 @@ if archivo_cargado:
         
         # 2. Entrada de Presupuesto
         st.subheader("💰 Ingresa el Presupuesto Semanal:")
-        presupuesto = st.number_input("", min_value=0.0, value=50000.0, step=1000.0, label_visibility="collapsed")
+        presupuesto = st.number_input("", min_value=0.0, value=150000.0, step=1000.0, label_visibility="collapsed")
 
         # 3. Módulo Único de Búsqueda
         st.subheader("🔍 Módulo de Búsqueda e Inserción")
@@ -76,10 +81,11 @@ if archivo_cargado:
         if busqueda:
             busqueda_clean = busqueda.upper().strip()
             
-            # Verificar SKU exacto de forma segura
+            # Verificar SKU exacto de forma segura empleando loc
             match_sku = df_base[df_base['CLAVE PRODUCTO'].astype(str).str.strip().str.upper() == busqueda_clean]
             
             if not match_sku.empty:
+                # CORREGIDO: Se extrae el string exacto de la primera coincidencia usando .iloc[0] y el nombre de la columna
                 st.session_state.codigo_a_procesar = str(match_sku.iloc[0]['CLAVE PRODUCTO']).strip()
             else:
                 # Filtrado por palabras clave en la descripción
@@ -99,10 +105,13 @@ if archivo_cargado:
                         desc_r = row['DESCRIPCION']
                         precio_r = row['PRECIO UNITARIO']
                         
-                        if st.button(f"📦 {desc_r} | ${precio_r} MXN", key=f"sel_{clave_r}"):
-                            st.session_state.codigo_a_procesar = clave_r
-                            st.session_state.search_input = ""
-                            st.rerun()
+                        # CORREGIDO: Se usa on_click en lugar de st.rerun directo para evitar el error de sesión
+                        st.button(
+                            f"📦 {desc_r} | ${precio_r} MXN", 
+                            key=f"sel_{clave_r}", 
+                            on_click=seleccionar_producto, 
+                            args=(clave_r,)
+                        )
                 else:
                     st.error(f"❌ '{busqueda}' no coincide con ningún SKU ni descripción.")
 
@@ -112,6 +121,7 @@ if archivo_cargado:
             producto_match = df_base[df_base['CLAVE PRODUCTO'].astype(str).str.strip() == codigo]
             
             if not producto_match.empty:
+                # CORREGIDO: Extraer la posición entera única (el primer elemento) para que .loc funcione bien
                 idx = producto_match.index[0]
                 desc = df_base.loc[idx, 'DESCRIPCION']
                 precio_uni = float(df_base.loc[idx, 'PRECIO UNITARIO'])
@@ -156,15 +166,12 @@ if archivo_cargado:
             with col1:
                 df_final = df_base.copy()
                 
-                # Mapeamos los valores de forma limpia y rellenamos los vacíos con 0
+                # Mapeamos los valores y rellenamos con 0 para que Excel no se rompa
                 df_final['CANTIDAD'] = df_final['CLAVE PRODUCTO'].astype(str).str.strip().map(
                     lambda x: st.session_state.carrito[x]['cantidad'] if x in st.session_state.carrito else 0
                 )
-                
-                # Convertimos explícitamente a tipo entero para la compatibilidad con Excel
                 df_final['CANTIDAD'] = df_final['CANTIDAD'].astype(int)
                 
-                # REEMPLAZADO AQUÍ: Se cambió 'xlsxwriter' por 'openpyxl'
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     df_final.to_excel(writer, index=False, sheet_name='Pedido')
