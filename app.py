@@ -15,6 +15,12 @@ st.markdown("""
     .metric-box { padding: 15px; border-radius: 8px; margin-bottom: 15px; font-weight: bold; text-align: center; }
     .verde { background-color: #1b4332; color: #75e6da; border: 1px solid #2d6a4f; }
     .rojo { background-color: #660708; color: #ffb3c1; border: 1px solid #a4161a; }
+    .btn-mail { 
+        display: block; width: 100%; padding: 10px; background-color: #21262d; 
+        color: #c9d1d9; border: 1px solid #30363d; border-radius: 6px; 
+        text-align: center; text-decoration: none; font-weight: bold; margin-top: 10px;
+    }
+    .btn-mail:hover { background-color: #30363d; color: #ffffff; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -23,8 +29,6 @@ st.title("📱 Mi Captura de Pedidos")
 # Inicializar estados de la aplicación
 if "carrito" not in st.session_state:
     st.session_state.carrito = {}
-if "confirmar_borrar" not in st.session_state:
-    st.session_state.confirmar_borrar = False
 if "codigo_a_procesar" not in st.session_state:
     st.session_state.codigo_a_procesar = ""
 
@@ -55,6 +59,7 @@ def cargar_datos(archivo):
 # 1. Carga del Archivo
 st.subheader("📂 1. Arrastra aquí el Excel o CSV del proveedor")
 archivo_cargado = st.file_uploader("", type=["xlsx", "csv"], label_visibility="collapsed")
+
 if archivo_cargado:
     try:
         df_base = cargar_datos(archivo_cargado)
@@ -63,41 +68,40 @@ if archivo_cargado:
         st.subheader("💰 Ingresa el Presupuesto Semanal:")
         presupuesto = st.number_input("", min_value=0.0, value=50000.0, step=1000.0, label_visibility="collapsed")
 
-        # 3. Módulo Único de Búsqueda (Soporta SKU, Escritura o Voz mediante el micrófono de tu teclado)
+        # 3. Módulo Único de Búsqueda
         st.subheader("🔍 Módulo de Búsqueda e Inserción")
         
-        busqueda = st.text_input("🎙️ Escribe SKU o dicta el artículo (Ej: G-93278547 o bomba agua duster):", key="search_input").strip()
+        busqueda = st.text_input("🎙️ Escribe SKU o dicta el artículo:", key="search_input").strip()
         
         if busqueda:
             busqueda_clean = busqueda.upper().strip()
             
-            # Intento 1: Verificar si es exactamente un SKU / Clave de Producto de la lista
-            match_sku = df_base[df_base['CLAVE PRODUCTO'].str.strip().str.upper() == busqueda_clean]
+            # Verificar SKU exacto de forma segura
+            match_sku = df_base[df_base['CLAVE PRODUCTO'].astype(str).str.strip().str.upper() == busqueda_clean]
             
             if not match_sku.empty:
-                # Si es un SKU válido, lo guardamos directo para procesarlo abajo
-                st.session_state.codigo_a_procesar = match_sku.iloc[0]['CLAVE PRODUCTO'].strip()
+                st.session_state.codigo_a_procesar = str(match_sku.iloc[0]['CLAVE PRODUCTO']).strip()
             else:
-                # Intento 2: Si no es un SKU, filtramos por descripción usando un método seguro paso a paso
-                palabras = busqueda.lower().split()
-                # Empezamos con una máscara de Verdaderos (True) del mismo tamaño que las filas
+                # Filtrado por palabras clave en la descripción
+                palabras = busqueda_clean.lower().split()
                 mascara = pd.Series([True] * len(df_base), index=df_base.index)
+                descripcion_col = df_base['DESCRIPCION'].astype(str).str.lower().fillna('')
                 
-                descripcion_col = df_base['DESCRIPCION'].str.lower().fillna('')
                 for palabra in palabras:
                     mascara = mascara & descripcion_col.str.contains(palabra, regex=False)
                 
                 resultados = df_base[mascara]
                 
                 if not resultados.empty:
-                    st.write("✨ Coincidencias encontradas (Toca una para seleccionarla):")
+                    st.write("✨ Coincidencias encontradas:")
                     for index, row in resultados.head(5).iterrows():
-                        clave_r = row['CLAVE PRODUCTO']
+                        clave_r = str(row['CLAVE PRODUCTO']).strip()
                         desc_r = row['DESCRIPCION']
                         precio_r = row['PRECIO UNITARIO']
                         
                         if st.button(f"📦 {desc_r} | ${precio_r} MXN", key=f"sel_{clave_r}"):
-                            st.session_state.codigo_a_procesar = str(clave_r).strip()
+                            st.session_state.codigo_a_procesar = clave_r
+                            st.session_state.search_input = ""
                             st.rerun()
                 else:
                     st.error(f"❌ '{busqueda}' no coincide con ningún SKU ni descripción.")
@@ -105,16 +109,16 @@ if archivo_cargado:
         # Formulario dinámico para agregar la cantidad del artículo seleccionado
         if st.session_state.codigo_a_procesar:
             codigo = st.session_state.codigo_a_procesar
-            producto_match = df_base[df_base['CLAVE PRODUCTO'].str.strip() == codigo]
+            producto_match = df_base[df_base['CLAVE PRODUCTO'].astype(str).str.strip() == codigo]
             
             if not producto_match.empty:
                 idx = producto_match.index[0]
                 desc = df_base.loc[idx, 'DESCRIPCION']
                 precio_uni = float(df_base.loc[idx, 'PRECIO UNITARIO'])
                 
-                st.success(f"Seleccionado: {desc}")
+                st.info(f"📥 Añadiendo: {desc}")
                 
-                with st.form(key="form_agregar_pedido"):
+                with st.form(key="form_agregar_pedido", clear_on_submit=True):
                     cant = st.number_input(f"Cantidad para {codigo}:", min_value=1, value=1, step=1)
                     if st.form_submit_button("Confirmar y Agregar al Carrito"):
                         st.session_state.carrito[codigo] = {
@@ -150,12 +154,19 @@ if archivo_cargado:
             col1, col2 = st.columns(2)
             
             with col1:
-                output = io.BytesIO()
                 df_final = df_base.copy()
-                df_final['CANTIDAD'] = df_final['CLAVE PRODUCTO'].map(
-                    lambda x: st.session_state.carrito[x.strip()]['cantidad'] if x.strip() in st.session_state.carrito else ""
+                
+                # Mapeamos los valores de forma limpia y rellenamos los vacíos con 0
+                df_final['CANTIDAD'] = df_final['CLAVE PRODUCTO'].astype(str).str.strip().map(
+                    lambda x: st.session_state.carrito[x]['cantidad'] if x in st.session_state.carrito else 0
                 )
-                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                
+                # Convertimos explícitamente a tipo entero para la compatibilidad con Excel
+                df_final['CANTIDAD'] = df_final['CANTIDAD'].astype(int)
+                
+                # REEMPLAZADO AQUÍ: Se cambió 'xlsxwriter' por 'openpyxl'
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     df_final.to_excel(writer, index=False, sheet_name='Pedido')
                 
                 st.download_button(
@@ -165,28 +176,14 @@ if archivo_cargado:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True
                 )
-                
-                asunto = urllib.parse.quote("Nuevo Pedido Semanal de Refacciones")
-                cuerpo = urllib.parse.quote("Hola, te comparto el pedido semanal.")
-                mailto_link = f"mailto:?subject={asunto}&body={cuerpo}"
-                st.markdown(f'<a href="{mailto_link}" target="_blank"><button style="width:100%; padding:10px; background-color:#21262d; color:white; border:1px solid #30363d; border-radius:5px; font-weight:bold; cursor:pointer;">✉️ Redactar Correo</button></a>', unsafe_allow_html=True)
-
+            
             with col2:
-                if not st.session_state.confirmar_borrar:
-                    if st.button("🧹 Clear", use_container_width=True):
-                        st.session_state.confirmar_borrar = True
-                        st.rerun()
-                else:
-                    st.warning("⚠️ ¿Borrar todo?")
-                    col_si, col_no = st.columns(2)
-                    with col_si:
-                        if st.button("SÍ, BORRAR", type="primary", use_container_width=True):
-                            st.session_state.carrito = {}
-                            st.session_state.confirmar_borrar = False
-                            st.rerun()
-                    with col_no:
-                        if st.button("NO, CANCELAR", use_container_width=True):
-                            st.session_state.confirmar_borrar = False
-                            st.rerun()
+                asunto = urllib.parse.quote("Nuevo Pedido Semanal de Refacciones")
+                cuerpo = urllib.parse.quote("Hola, te comparto el archivo de mi pedido semanal adjunto.")
+                mailto_link = f"mailto:?subject={asunto}&body={cuerpo}"
+                st.markdown(f'<a href="{mailto_link}" class="btn-mail">✉️ Enviar por Correo</a>', unsafe_allow_html=True)
+        else:
+            st.info("El carrito está vacío. Busca productos para agregarlos.")
+            
     except Exception as e:
-        st.error(f"Error en la ejecución de la app: {e}")
+        st.error(f"Error al procesar el archivo: {e}")
